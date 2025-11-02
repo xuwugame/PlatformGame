@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3 uid="uid://pe075137w0r"]
+
+[ext_resource type="Texture2D" uid="uid://bal572cdtjji8" path="res://Assets/Texture/Character/Player/Idle/PlayerIdle0.png" id="1_fht42"]
+
+[node name="Player" type="Node2D"]
+
+[node name="PlayerIdle0" type="Sprite2D" parent="."]
+position = Vector2(282, 499)
+texture = ExtResource("1_fht42")
