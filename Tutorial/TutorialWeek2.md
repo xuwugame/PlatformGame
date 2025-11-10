@@ -651,260 +651,308 @@ Attack0动画同理
 ##### ⑨完整代码
 
 ```
-extends CharacterPlayerBase
+extends CharacterBody2D
 
-const WALK_SPEED : float = 600.0
-const WALK_AIR_SPEED : float = 600.0
-const JUMP_SPEED_MIN : float = 800.0
-const JUMP_SPEED_MAX : float = 1200.0
-const JUMP_SPEED_INCREASE : float = 10000.0
-const HIT_X_STRENGTH : float = 400.0
+const WALK_SPEED : float = 600.0#行走速度
+const WALK_AIR_SPEED : float = 600.0#空中移动速度
+const JUMP_SPEED_MIN : float = 400.0#跳跃最小速度
+const JUMP_SPEED_MAX : float = 1200.0#跳跃最大速度
+const JUMP_SPEED_INCREASE : float = 10000.0#跳跃增长速度
+const FALL_SPEED_MAX : float = 500.0#下落最大速度
 
+#标记后续属性会在 Node 就绪时赋值
 @onready var animationPlayer: AnimationPlayer = %AnimationPlayer
-@onready var hitbox: Area2D = %Hitbox
+@onready var stateChart: StateChart = %StateChart
+@onready var graphics: Node2D = %Graphics
 
-@onready var jumpInputTimer: Timer = %JumpInputTimer
-@onready var jumpCoyoteTimer: Timer = %JumpCoyoteTimer
-@onready var attackInputTimer: Timer = %AttackInputTimer
-
-#Input
+#X轴方向
 var xAxis : float = 0
+#跳跃按下
 var jumpInput : bool = false
+#攻击键按下
 var attackInput : bool = false
-
+#重力
 var gravity : Vector2 = Vector2.ZERO
-
+#跳跃结束
 var jumpOver : bool = false
-var attackLoopIndex : int = 0
+#攻击状态可切换,导出属性可以在动画编辑器添加轨道
 @export var attackCanChange : bool = false
+#当前攻击连击
+var attackLoopIndex : int = 0
 
-func EnemyRoundEntered() -> void :
-	super.EnemyRoundEntered()
-	isRest = false
+#准备脚本,当节点“就绪”时被调用，即当节点及其子节点都已经进入场景树时
+func _ready() -> void:
+	pass
 
-func PlayerRoundEntered() -> void :
-	super.PlayerRoundEntered()
-	isRest = true
-
-@warning_ignore("unused_parameter")
+#每个物理周期调用一次，允许节点将其逻辑与物理周期同步。delta 是物理周期之间的逻辑时间（单位为秒）
 func _physics_process(delta: float) -> void:
+	#获取重力
 	gravity = get_gravity()
 
-	if !isRest :
-		xAxis = Input.get_axis( &"Left" , &"Right" )
-		jumpInput = Input.is_action_just_pressed( "Jump" )
-		if jumpInput :
-			if jumpInputTimer.is_stopped() :
-				jumpInputTimer.start()
-		attackInput = Input.is_action_just_pressed( "Attack" )
-		if attackInput :
-			if attackInputTimer.is_stopped() :
-				attackInputTimer.start()
-		if !is_on_floor() :
-			if !jumpOver :
-				if Input.is_action_pressed( "Jump" ) :
-					velocity.y += up_direction.y * JUMP_SPEED_INCREASE * delta
-					if velocity.y < -JUMP_SPEED_MAX :
-						jumpOver = true
-	else :
-		xAxis = 0.0
-		jumpInput = false
+	#获取x轴
+	xAxis = Input.get_axis( &"Left" , &"Right" )
+	#获取按下跳跃键
+	jumpInput = Input.is_action_just_pressed( "Jump" )
+	#获取按下攻击键
+	attackInput = Input.is_action_just_pressed( "Attack" )
 
-	if sprite.flip_h :
-		hitbox.scale.x = -1
-	else :
-		hitbox.scale.x = 1
+	#判断没有落在地面上
+	if !is_on_floor() :
+		#没有跳跃结束
+		if !jumpOver :
+			#跳跃键正在按下
+			if Input.is_action_pressed( "Jump" ) :
+				#添加速度在y轴直到最大跳跃速度
+				velocity.y += up_direction.y * JUMP_SPEED_INCREASE * delta
+				#到达跳跃最大速度,结束跳跃
+				if velocity.y < -JUMP_SPEED_MAX :
+					jumpOver = true
 
-	var isOnfloor = is_on_floor()
-
+	#根据 velocity 移动该物体
 	move_and_slide()
 
+	#判断是否落在地面上
 	if is_on_floor() :
 		jumpOver = false
-	elif isOnfloor && velocity.y >= 0 :
-		jumpOver = true
-		jumpCoyoteTimer.start()
 
-func CheckJump() -> bool :
-	return !jumpInputTimer.is_stopped()
 
-func RestEntered() -> void:
-	super.RestEntered()
-	#animationPlayer.play( &"Idle" )
+#检测是否能跳跃
+func CanJump() -> bool :
+	return jumpInput
 
-@warning_ignore("unused_parameter")
-func RestPhysicsProcessing(delta: float) -> void:
-	if !is_on_floor() :
-		velocity.y += gravity.y * delta
-
-	if xAxis == 0 :
-		velocity.x = move_toward( velocity.x , 0 , delta * 5000.0 )
-
-func RestExited() -> void:
-	super.RestExited()
-
+#Idle状态进入执行
 func IdleEntered() -> void:
+	#播放Idle动画
 	if animationPlayer.current_animation == &"WalkEnd" || animationPlayer.current_animation == &"SoftLand" :
 		animationPlayer.queue( &"Idle" )
 	else :
 		animationPlayer.play( &"Idle" )
 
+#Idle状态物理帧执行
 func IdlePhysicsProcessing(delta: float) -> void:
+	#检测是否在地面
 	if !is_on_floor() :
+		#增加y轴方向速度
 		velocity.y += gravity.y * delta
 
+	#检测x轴有输入,没输入时为0
 	if xAxis != 0 :
-		state.send_event( "ToWalk" )
+		#跳转状态到Walk
+		stateChart.send_event( "ToWalk" )
 		return
 	else :
+		#逐渐降低速度到0
 		velocity.x = move_toward( velocity.x , 0 , delta * 5000.0 )
 
+	#当y轴速度大于0时,判定为下落状态
 	if velocity.y > 0 :
+		#设置跳跃结束
 		jumpOver = true
-		state.send_event( "ToFall" )
+		#跳转状态到Fall
+		stateChart.send_event( "ToFall" )
 		return
 
-	if CheckJump() :
-		state.send_event( "ToJump" )
-		return
+	#如果在地面
+	if is_on_floor() :
+		#如果可以跳跃
+		if CanJump() :
+			#跳转状态到Jump
+			stateChart.send_event( "ToJump" )
+			return
 
+	#如果按下攻击键
 	if attackInput :
-		state.send_event( "ToAttack" )
+		#跳转状态到Attack
+		stateChart.send_event( "ToAttack" )
 		return
 
+#Idle状态退出执行
 func IdleExited() -> void:
-	pass # Replace with function body.
+	pass
 
+#Walk状态进入执行
 func WalkEntered() -> void:
+	#播放Walk动画
 	animationPlayer.play( &"WalkStart" )
 	animationPlayer.queue( &"Walk" )
 
+#Walk状态物理帧执行
 func WalkPhysicsProcessing(delta: float) -> void:
+	#检测是否在地面
 	if !is_on_floor() :
 		velocity.y += gravity.y * delta
 
+	#检测x轴有输入,没输入时为0
 	if xAxis == 0 :
-		state.send_event( "ToIdle" )
+		stateChart.send_event( "ToIdle" )
 		return
 	else :
 		velocity.x = move_toward( velocity.x , xAxis * WALK_SPEED , delta * 8000.0 )
-		if sprite.flip_h != ( xAxis < 0 ) :
+		#检测角色朝向是否与输入相同
+		if sign( graphics.scale.x ) != sign( xAxis ) :
+			#检测当前动画是否为转向动画
 			if animationPlayer.current_animation != &"Turn" :
-				sprite.flip_h = !sprite.flip_h
+				#设置转向为当前输入方向
+				graphics.scale.x = -graphics.scale.x
+				#播放转向动画
 				animationPlayer.play( &"Turn" )
 				animationPlayer.queue( &"Walk" )
 
+	#当y轴速度大于0时,判定为下落状态
 	if velocity.y > 0 :
+		#设置跳跃结束
 		jumpOver = true
-		state.send_event( "ToFall" )
+		#跳转状态到Fall
+		stateChart.send_event( "ToFall" )
 		return
 
-	if CheckJump() :
-		state.send_event( "ToJump" )
-		return
+	#如果在地面
+	if is_on_floor() :
+		#如果可以跳跃
+		if CanJump() :
+			#跳转状态到Jump
+			stateChart.send_event( "ToJump" )
+			return
 
+	#如果按下攻击键
 	if attackInput :
-		state.send_event( "ToAttack" )
+		#跳转状态到Attack
+		stateChart.send_event( "ToAttack" )
 		return
 
+#Walk状态退出执行
 func WalkExited() -> void:
+	#播放行走结束动画
 	animationPlayer.play( &"WalkEnd" )
 
+#Jump状态进入执行
 func JumpEntered() -> void:
-	attackInputTimer.stop()
+	#设置为最小跳跃速度
 	velocity += up_direction * JUMP_SPEED_MIN
+	#播放跳跃动画
 	animationPlayer.play( &"Jump" )
 
+#Jump状态物理帧执行
 func JumpPhysicsProcessing(delta: float) -> void:
+	#检测x轴有输入,没输入时为0
 	if xAxis == 0 :
 		velocity.x = move_toward( velocity.x , 0.0 , delta * 5000.0 )
 	else :
 		velocity.x = move_toward( velocity.x , xAxis * WALK_AIR_SPEED , delta * 5000.0 )
-		if sprite.flip_h != ( xAxis < 0 ) :
-			sprite.flip_h = !sprite.flip_h
+		#检测角色朝向是否与输入相同
+		if sign( graphics.scale.x ) != sign( xAxis ) :
+			graphics.scale.x = -graphics.scale.x
 
+	#松开跳跃键
 	if Input.is_action_just_released( "Jump" ) :
+		#将y轴速度降低优化手感
 		velocity.y /= 4.0
+		#跳跃结束
 		jumpOver = true
 		return
 
+	#检测地面
 	if is_on_floor() :
+		#检测x轴有输入,没输入时为0
 		if xAxis == 0 :
-			state.send_event( "ToIdle" )
+			#没输入转为Idle状态
+			stateChart.send_event( "ToIdle" )
 		else :
-			state.send_event( "ToWalk" )
+			#有输入转为Walk状态
+			stateChart.send_event( "ToWalk" )
 		return
 	else :
+		#在跳跃结束的时候或者没有按下跳跃键的时候,将重力加入
 		if jumpOver || !jumpInput :
 			velocity.y += gravity.y * delta
 
-	if velocity.y >= 0 :
+	#当y轴速度大于0时,判定为下落状态
+	if velocity.y > 0 :
+		#设置跳跃结束
 		jumpOver = true
-		state.send_event( "ToFall" )
+		#跳转状态到Fall
+		stateChart.send_event( "ToFall" )
 		return
-
+	
+	#如果按下攻击键
 	if attackInput :
-		state.send_event( "ToAttack" )
+		#跳转状态到Attack
+		stateChart.send_event( "ToAttack" )
 		return
 
+#Jump状态退出执行
 func JumpExited() -> void:
-	pass # Replace with function body.
+	pass
 
+#Fall状态进入执行
 func FallEntered() -> void:
+	#播放Fall动画
 	animationPlayer.play( &"Fall" )
 
+#Fall状态物理帧执行
 func FallPhysicsProcessing(delta: float) -> void:
+	#检测x轴有输入,没输入时为0
 	if xAxis == 0 :
 		velocity.x = move_toward( velocity.x , 0.0 , delta * 5000.0 )
 	else :
 		velocity.x = move_toward( velocity.x , xAxis * WALK_AIR_SPEED , delta * 5000.0 )
-		if sprite.flip_h != ( xAxis < 0 ) :
-			sprite.flip_h = !sprite.flip_h
+		#检测角色朝向是否与输入相同
+		if sign( graphics.scale.x ) != sign( xAxis ) :
+			graphics.scale.x = -graphics.scale.x
 
 	if is_on_floor() :
+		#检测x轴有输入,没输入时为0
 		if xAxis == 0 :
-			animationPlayer.play( &"SoftLand" )
-			state.send_event( "ToIdle" )
+			#没输入转为Idle状态
+			stateChart.send_event( "ToIdle" )
 		else :
-			state.send_event( "ToWalk" )
+			#有输入转为Walk状态
+			stateChart.send_event( "ToWalk" )
 		jumpOver = false 
 		return
 	else :
 		velocity.y += gravity.y * delta
 
-	if !jumpCoyoteTimer.is_stopped() :
-		if CheckJump() :
-			jumpOver = false
-			jumpCoyoteTimer.stop()
-			state.send_event( "ToJump" )
-			return
-
+	#如果按下攻击键
 	if attackInput :
-		state.send_event( "ToAttack" )
+		#跳转状态到Attack
+		stateChart.send_event( "ToAttack" )
 		return
 
+#Fall状态退出执行
 func FallExited() -> void:
-	pass # Replace with function body.
+	pass
 
+#Attack状态进入执行
 func AttackEntered() -> void:
-	attackLoopIndex = 0
 	animationPlayer.play( &"Attack0" )
 
+#Attack状态物理帧执行
 func AttackPhysicsProcessing(delta: float) -> void:
+	#检测是否在地面
 	if !is_on_floor() :
 		velocity.y += gravity.y * delta
-
+	
+	#检测x轴有输入,没输入时为0
 	if xAxis == 0 :
 		velocity.x = move_toward( velocity.x , 0.0 , delta * 5000.0 )
 	else :
+		#攻击方向不能在正在攻击的时候发生改变
 		if attackCanChange :
-			if sprite.flip_h != ( xAxis < 0 ) :
-				sprite.flip_h = !sprite.flip_h
+			if sign( graphics.scale.x ) != sign( xAxis ) :
+				graphics.scale.x = -graphics.scale.x
 		if is_on_floor() :
 			velocity.x = move_toward( velocity.x , xAxis * WALK_SPEED , delta * 5000.0 )
 		else :
 			velocity.x = move_toward( velocity.x , xAxis * WALK_AIR_SPEED , delta * 5000.0 )
 
+	#松开跳跃键
+	if Input.is_action_just_released( "Jump" ) :
+		#跳跃结束
+		jumpOver = true
+		return
+
+	#攻击动画循环
 	if attackInput :
 		if attackCanChange :
 			attackLoopIndex = ( attackLoopIndex + 1 ) % 2
@@ -916,38 +964,26 @@ func AttackPhysicsProcessing(delta: float) -> void:
 			attackCanChange = false
 			attackInput = false
 
-	if !jumpCoyoteTimer.is_stopped() :
-		if CheckJump() :
-			jumpCoyoteTimer.stop()
-			state.send_event( "ToJump" )
-			return
-
 	if is_on_floor() :
-		if CheckJump() :
-			state.send_event( "ToJump" )
+		if CanJump() :
+			stateChart.send_event( "ToJump" )
 			return
 
+#Attack状态退出执行
 func AttackExited() -> void:
 	pass
 
+#动画结束执行
 func AnimationFinished(animName: StringName) -> void:
 	match animName :
 		&"Attack0" , &"Attack1" :
 			if is_on_floor() :
 				if xAxis == 0.0 :
-					state.send_event( "ToIdle" )
+					stateChart.send_event( "ToIdle" )
 				else :
-					state.send_event( "ToWalk" )
+					stateChart.send_event( "ToWalk" )
 			else :
-				if velocity.y >= 0 :
-					state.send_event( "ToFall" )
-				else :
-					state.send_event( "ToJump" )
-
-func HitCheck(body: Node2D) -> void:
-	if body is CharacterEnemyBase :
-		body.Hurt( 5 )
-		velocity.x = sign( global_position.x - body.global_position.x ) * HIT_X_STRENGTH
+				stateChart.send_event( "ToFall" )
 
 ```
 
